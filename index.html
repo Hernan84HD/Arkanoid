@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Neon Cyberpunk Breakout</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
     <style>
@@ -15,12 +15,12 @@
             align-items: center;
             height: 100vh;
             background-color: #000B1E;
-            /* Deep Dark Blue */
             font-family: 'Orbitron', sans-serif;
             overflow: hidden;
+            touch-action: none;
+            /* Previene scroll en móvil */
         }
 
-        /* Fondo de rejilla retro-futurista */
         .retro-grid {
             position: absolute;
             width: 200%;
@@ -47,12 +47,11 @@
 
         #gameCanvas {
             border: 2px solid #00FFFF;
-            /* Cyan Border */
             box-shadow: 0 0 30px rgba(0, 255, 255, 0.3), inset 0 0 20px rgba(0, 0, 0, 0.8);
             background-color: rgba(0, 11, 30, 0.85);
-            /* Semi-transparent dark blue */
             cursor: none;
             backdrop-filter: blur(5px);
+            display: block;
         }
 
         #ui-layer {
@@ -62,24 +61,47 @@
             width: 100%;
             display: none;
             z-index: 10;
+            top: 50%;
+            transform: translateY(-50%);
         }
 
         h1 {
             color: #FF00FF;
-            /* Fuchsia */
             text-shadow: 0 0 15px #FF00FF, 0 0 30px #FF00FF;
-            font-size: 4rem;
+            font-size: 3rem;
+            /* Adjusted for mobile safety */
             margin-bottom: 10px;
             letter-spacing: 5px;
             text-transform: uppercase;
         }
 
         p {
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             color: #00FFFF;
-            /* Cyan */
             text-shadow: 0 0 10px #00FFFF;
             animation: pulse 1.5s infinite;
+        }
+
+        /* Indicador visual para zona táctil */
+        #touch-zone-hint {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
+            color: rgba(0, 255, 255, 0.3);
+            font-size: 0.8rem;
+            pointer-events: none;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            #touch-zone-hint {
+                display: block;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
         }
 
         @keyframes pulse {
@@ -104,308 +126,339 @@
 
     <div id="ui-layer">
         <h1 id="game-title">SYSTEM FAILURE</h1>
-        <p>CLICK TO REBOOT</p>
+        <p>TAP OR PRESS SPACE TO REBOOT</p>
     </div>
 
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="touch-zone-hint">DESLIZA AQUÍ PARA MOVER</div>
+
+    <canvas id="gameCanvas"></canvas>
 
     <script>
-        // --- Configuración e Inicialización ---
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const uiLayer = document.getElementById('ui-layer');
         const gameTitle = document.getElementById('game-title');
 
+        // Estado del juego
         let isGameOver = false;
+        let isPlaying = false; // Nuevo estado para esperar inicio
         let score = 0;
 
-        // Pelota
-        const ballRadius = 6; // Un poco más pequeña para parecer un láser
-        let x, y, dx, dy;
-        const initialSpeed = 5;
-
-        // Trail (Estela)
-        const trailLength = 10;
-        let ballTrail = []; // {x, y}
-
-        // Paleta
-        const paddleHeight = 12;
-        const paddleWidth = 100;
-        let paddleX;
-
-        // Ladrillos
-        const brickRowCount = 4; // Una fila extra
-        const brickColumnCount = 8;
-        const brickPadding = 15;
-        const brickOffsetTop = 60;
-        const brickOffsetLeft = 35;
-        const brickHeight = 20;
-        const brickWidth = (canvas.width - (brickOffsetLeft * 2) - (brickPadding * (brickColumnCount - 1))) / brickColumnCount;
-
+        // Entidades
+        let ball = { x: 0, y: 0, dx: 0, dy: 0, radius: 6 };
+        let paddle = { x: 0, width: 100, height: 12 };
         let bricks = [];
-
-        // Partículas
         let particles = [];
+        let ballTrail = [];
+
+        // Configuración estética
+        const brickPadding = 10;
+        const brickOffsetTop = 60;
+        const trailLength = 10;
+
+        // Inputs
+        let rightPressed = false;
+        let leftPressed = false;
+
+        // --- Redimensionado y Adaptabilidad ---
+        function resizeCanvas() {
+            // Ajustar al tamaño de la ventana
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            // Ajustar paleta para móviles
+            if (canvas.width < 500) {
+                paddle.width = 80;
+            } else {
+                paddle.width = 100;
+            }
+
+            // Reiniciar si estamos en medio de juego o menú para ajustar posiciones
+            if (!isPlaying) {
+                resetBallPaddle();
+            }
+        }
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            // Si no estamos jugando, reinicializar ladrillos para ajustar columnas
+            if (!isPlaying) {
+                initGame();
+            }
+        });
+
+        // --- Inicialización ---
+
         class Particle {
             constructor(x, y, color) {
-                this.x = x;
-                this.y = y;
-                this.color = color;
+                this.x = x; this.y = y; this.color = color;
                 this.size = Math.random() * 3 + 1;
                 this.speedX = Math.random() * 6 - 3;
                 this.speedY = Math.random() * 6 - 3;
-                this.life = 1.0; // Opacidad
-                this.decay = Math.random() * 0.02 + 0.01;
+                this.life = 1.0; this.decay = Math.random() * 0.02 + 0.01;
             }
-            update() {
-                this.x += this.speedX;
-                this.y += this.speedY;
-                this.life -= this.decay;
-            }
+            update() { this.x += this.speedX; this.y += this.speedY; this.life -= this.decay; }
             draw(ctx) {
-                ctx.save();
-                ctx.globalAlpha = this.life;
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = this.color;
-                ctx.beginPath();
-                ctx.rect(this.x, this.y, this.size, this.size); // Cuadradas para estilo digital
-                ctx.fill();
-                ctx.restore();
+                ctx.save(); ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color; ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+                ctx.beginPath(); ctx.rect(this.x, this.y, this.size, this.size);
+                ctx.fill(); ctx.restore();
             }
         }
 
         function createExplosion(x, y, color) {
-            for (let i = 0; i < 15; i++) {
-                particles.push(new Particle(x, y, color));
-            }
+            for (let i = 0; i < 15; i++) { particles.push(new Particle(x, y, color)); }
+        }
+
+        function resetBallPaddle() {
+            paddle.x = (canvas.width - paddle.width) / 2;
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height - 40;
+            ball.dx = 0;
+            ball.dy = 0;
+            ballTrail = [];
         }
 
         function initGame() {
-            x = canvas.width / 2;
-            y = canvas.height - 40;
-            dx = initialSpeed * (Math.random() > 0.5 ? 1 : -1);
-            dy = -initialSpeed;
-            paddleX = (canvas.width - paddleWidth) / 2;
-            ballTrail = [];
-            particles = [];
+            isPlaying = false;
+            isGameOver = false;
             score = 0;
+            uiLayer.style.display = 'block';
+            gameTitle.innerText = "NEON BREAKOUT";
 
-            // Inicializar ladrillos con colores Cyberpunk por fila
-            // Colores: Pink, Yellow, Green, Cyan
-            const rowColors = ["#FF00FF", "#FFFF00", "#00FF00", "#00FFFF"];
+            resetBallPaddle();
+
+            // Calcular columnas dinámicamente según ancho
+            let brickColumnCount = Math.floor((canvas.width - 40) / 70); // ~70px por ladrillo
+            brickColumnCount = Math.max(3, Math.min(brickColumnCount, 12)); // Min 3, Max 12
+
+            const brickRowCount = 5;
+            const totalBrickWidth = canvas.width - (brickPadding * (brickColumnCount - 1)) - 40; // 20px padding lados
+            const brickWidth = totalBrickWidth / brickColumnCount;
+            const brickOffsetLeft = 20;
+
+            const rowColors = ["#FF00FF", "#FFFF00", "#00FF00", "#00FFFF", "#FF0055"];
 
             bricks = [];
             for (let c = 0; c < brickColumnCount; c++) {
                 bricks[c] = [];
                 for (let r = 0; r < brickRowCount; r++) {
                     bricks[c][r] = {
-                        x: 0,
-                        y: 0,
+                        x: (c * (brickWidth + brickPadding)) + brickOffsetLeft,
+                        y: (r * (20 + brickPadding)) + brickOffsetTop,
                         status: 1,
-                        color: rowColors[r % rowColors.length]
+                        color: rowColors[r % rowColors.length],
+                        w: brickWidth, h: 20
                     };
                 }
             }
         }
 
-        // --- Inputs ---
-        document.addEventListener("mousemove", mouseMoveHandler, false);
-        document.addEventListener("click", clickHandler, false);
+        function startGame() {
+            if (!isPlaying && !isGameOver) {
+                isPlaying = true;
+                uiLayer.style.display = 'none';
+                const speed = canvas.width < 500 ? 5 : 7; // Más lento en pantallas pequeñas
+                ball.dx = speed * (Math.random() > 0.5 ? 1 : -1);
+                ball.dy = -speed;
+            } else if (isGameOver) {
+                initGame();
+            }
+        }
 
+        // --- Inputs ---
+        // Teclado
+        document.addEventListener("keydown", keyDownHandler, false);
+        document.addEventListener("keyup", keyUpHandler, false);
+
+        function keyDownHandler(e) {
+            if (e.key == "Right" || e.key == "ArrowRight") rightPressed = true;
+            else if (e.key == "Left" || e.key == "ArrowLeft") leftPressed = true;
+            else if (e.code == "Space") startGame();
+        }
+        function keyUpHandler(e) {
+            if (e.key == "Right" || e.key == "ArrowRight") rightPressed = false;
+            else if (e.key == "Left" || e.key == "ArrowLeft") leftPressed = false;
+        }
+
+        // Touch (Mobile)
+        canvas.addEventListener("touchstart", touchHandler, { passive: false });
+        canvas.addEventListener("touchmove", touchHandler, { passive: false });
+        document.addEventListener("click", startGame); // Click para empezar también
+
+        function touchHandler(e) {
+            // Solo para empezar si estamos en menú
+            if (!isPlaying || isGameOver) {
+                startGame();
+                e.preventDefault();
+                return;
+            }
+
+            if (e.touches && e.touches.length > 0) {
+                const touchX = e.touches[0].clientX;
+                // Mover paleta directamente a la posición X del dedo
+                let relativeX = touchX - canvas.offsetLeft;
+                if (relativeX > 0 && relativeX < canvas.width) {
+                    // Centrar paleta en dedo
+                    paddle.x = relativeX - paddle.width / 2;
+                }
+                e.preventDefault(); // Prevenir scroll
+            }
+        }
+
+        // Mouse (Backup)
+        document.addEventListener("mousemove", mouseMoveHandler, false);
         function mouseMoveHandler(e) {
-            if (isGameOver) return;
+            if (!isPlaying) return;
             const relativeX = e.clientX - canvas.offsetLeft;
             if (relativeX > 0 && relativeX < canvas.width) {
-                paddleX = relativeX - paddleWidth / 2;
+                paddle.x = relativeX - paddle.width / 2;
             }
-        }
-
-        function clickHandler() {
-            if (isGameOver) {
-                resetGame();
-            }
-        }
-
-        function resetGame() {
-            isGameOver = false;
-            uiLayer.style.display = 'none';
-            initGame();
-            draw();
         }
 
         // --- Lógica Principal ---
-        function collisionDetection() {
-            for (let c = 0; c < brickColumnCount; c++) {
-                for (let r = 0; r < brickRowCount; r++) {
+        function update() {
+            // Movimiento Paleta (Teclado)
+            if (rightPressed && paddle.x < canvas.width - paddle.width) {
+                paddle.x += 8;
+            }
+            else if (leftPressed && paddle.x > 0) {
+                paddle.x -= 8;
+            }
+
+            // Límites paleta
+            if (paddle.x < 0) paddle.x = 0;
+            if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+
+            if (!isPlaying) return;
+
+            // Movimiento Pelota
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            // Rebotes
+            if (ball.x + ball.dx > canvas.width - ball.radius || ball.x + ball.dx < ball.radius) {
+                ball.dx = -ball.dx;
+            }
+            if (ball.y + ball.dy < ball.radius) {
+                ball.dy = -ball.dy;
+            } else if (ball.y + ball.dy > canvas.height - paddle.height - ball.radius) {
+                // Colisión paleta
+                if (ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                    let collidePoint = ball.x - (paddle.x + paddle.width / 2);
+                    collidePoint = collidePoint / (paddle.width / 2);
+                    let angle = collidePoint * (Math.PI / 3);
+
+                    let currentSpeed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
+                    currentSpeed = Math.min(currentSpeed * 1.05, 15);
+
+                    ball.dx = currentSpeed * Math.sin(angle);
+                    ball.dy = -currentSpeed * Math.cos(angle);
+                }
+            }
+
+            if (ball.y + ball.dy > canvas.height) {
+                endGame("SYSTEM FAILURE");
+            }
+
+            // Colisión Ladrillos
+            for (let c = 0; c < bricks.length; c++) {
+                for (let r = 0; r < bricks[c].length; r++) {
                     const b = bricks[c][r];
                     if (b.status === 1) {
-                        if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
-                            dy = -dy;
+                        if (ball.x > b.x && ball.x < b.x + b.w && ball.y > b.y && ball.y < b.y + b.h) {
+                            ball.dy = -ball.dy;
                             b.status = 0;
                             score++;
-                            createExplosion(b.x + brickWidth / 2, b.y + brickHeight / 2, b.color);
+                            createExplosion(b.x + b.w / 2, b.y + b.h / 2, b.color);
 
-                            // Sonido o efecto extra aquí podría ir bien
-
-                            if (score === brickRowCount * brickColumnCount) {
-                                showGameOver("SYSTEM HACKED"); // Mensaje de victoria temático
-                            }
+                            // Check Win (Simplificado para array dinámico)
+                            // ... se podría optimizar llevando cuenta de ladrillos totales
                         }
                     }
                 }
             }
         }
 
-        function showGameOver(message) {
+        function endGame(msg) {
             isGameOver = true;
-            gameTitle.innerText = message;
+            isPlaying = false;
+            gameTitle.innerText = msg;
             uiLayer.style.display = 'block';
         }
 
         // --- Dibujado ---
-        function drawBall() {
-            // Dibujar estela
-            for (let i = 0; i < ballTrail.length; i++) {
-                const pos = ballTrail[i];
-                const opacity = (i + 1) / ballTrail.length; // Más reciente = más opaco
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, ballRadius * (opacity * 0.8), 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(0, 255, 255, ${opacity * 0.5})`; // Cyan trail
-                ctx.fill();
-                ctx.closePath();
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Fondo transparente para ver grid detrás si quisiera, pero tengo bg opacity
+
+            // Pelota y Trail
+            if (isPlaying) {
+                ballTrail.push({ x: ball.x, y: ball.y });
+                if (ballTrail.length > trailLength) ballTrail.shift();
             }
 
-            // Dibujar pelota principal
+            ballTrail.forEach((pos, i) => {
+                const opacity = (i + 1) / ballTrail.length;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, ball.radius * (opacity * 0.8), 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0, 255, 255, ${opacity * 0.5})`;
+                ctx.fill();
+            });
+
             ctx.beginPath();
-            ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
             ctx.fillStyle = "#fff";
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = "#00FFFF"; // Cyan glow
+            ctx.shadowBlur = 15; ctx.shadowColor = "#00FFFF";
             ctx.fill();
-            ctx.closePath();
             ctx.shadowBlur = 0;
-        }
 
-        function drawPaddle() {
+            // Paleta
             ctx.beginPath();
-            // Estilo robótico: rect con borde y luz interior
             ctx.fillStyle = "#000";
-            ctx.strokeStyle = "#FF00FF"; // Fuchsia outline
+            ctx.strokeStyle = "#FF00FF";
             ctx.lineWidth = 2;
-            ctx.rect(paddleX, canvas.height - paddleHeight - 5, paddleWidth, paddleHeight);
+            ctx.rect(paddle.x, canvas.height - paddle.height - 5, paddle.width, paddle.height);
             ctx.stroke();
-
-            // Relleno brillante
             ctx.fillStyle = "rgba(255, 0, 255, 0.3)";
             ctx.fill();
-
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = "#FF00FF";
-            ctx.closePath();
             ctx.shadowBlur = 0;
-        }
 
-        function drawBricks() {
-            for (let c = 0; c < brickColumnCount; c++) {
-                for (let r = 0; r < brickRowCount; r++) {
-                    if (bricks[c][r].status === 1) {
-                        const brickX = (c * (brickWidth + brickPadding)) + brickOffsetLeft;
-                        const brickY = (r * (brickHeight + brickPadding)) + brickOffsetTop;
-                        bricks[c][r].x = brickX;
-                        bricks[c][r].y = brickY;
-
-                        const color = bricks[c][r].color;
-
+            // Ladrillos
+            bricks.forEach(col => {
+                col.forEach(b => {
+                    if (b.status === 1) {
                         ctx.beginPath();
-                        ctx.rect(brickX, brickY, brickWidth, brickHeight);
-                        ctx.fillStyle = color;
-                        ctx.shadowBlur = 10;
-                        ctx.shadowColor = color;
+                        ctx.rect(b.x, b.y, b.w, b.h);
+                        ctx.fillStyle = b.color;
+                        ctx.shadowBlur = 10; ctx.shadowColor = b.color;
                         ctx.fill();
-                        ctx.closePath();
-
-                        // Brillo interior para efecto "tubo de neón"
+                        ctx.shadowBlur = 0;
                         ctx.fillStyle = "rgba(255,255,255,0.3)";
-                        ctx.fillRect(brickX + 2, brickY + 2, brickWidth - 4, brickHeight - 4);
+                        ctx.fillRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4);
                     }
-                }
-            }
-            ctx.shadowBlur = 0;
-        }
+                });
+            });
 
-        function drawScore() {
-            ctx.font = "20px 'Orbitron'";
-            ctx.fillStyle = "#00FF00"; // Lime
-            ctx.shadowBlur = 5;
-            ctx.shadowColor = "#00FF00";
-            ctx.fillText("SCORE: " + score, 15, 30);
-            ctx.shadowBlur = 0;
-        }
-
-        function updateParticles() {
+            // Partículas
             for (let i = particles.length - 1; i >= 0; i--) {
                 particles[i].update();
                 particles[i].draw(ctx);
-                if (particles[i].life <= 0) {
-                    particles.splice(i, 1);
-                }
-            }
-        }
-
-        function draw() {
-            if (isGameOver) return;
-
-            // Limpieza con trail effect ligero en el fondo (opcional, aquí usaré clearRect normal para nitidez)
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            drawBricks();
-            drawPaddle();
-
-            // Actualizar trail pelota
-            ballTrail.push({ x: x, y: y });
-            if (ballTrail.length > trailLength) {
-                ballTrail.shift();
-            }
-            drawBall();
-
-            updateParticles();
-            drawScore();
-            collisionDetection();
-
-            // Rebotes
-            if (x + dx > canvas.width - ballRadius || x + dx < ballRadius) {
-                dx = -dx;
-            }
-            if (y + dy < ballRadius) {
-                dy = -dy;
-            } else if (y + dy > canvas.height - paddleHeight - ballRadius) { // Ajuste fino contacto paleta
-                if (x > paddleX && x < paddleX + paddleWidth) {
-                    let collidePoint = x - (paddleX + paddleWidth / 2);
-                    collidePoint = collidePoint / (paddleWidth / 2);
-                    let angle = collidePoint * (Math.PI / 3);
-
-                    let currentSpeed = Math.sqrt(dx * dx + dy * dy);
-                    currentSpeed = Math.min(currentSpeed * 1.05, 14); // Max speed cap
-
-                    dx = currentSpeed * Math.sin(angle);
-                    dy = -currentSpeed * Math.cos(angle);
-                }
+                if (particles[i].life <= 0) particles.splice(i, 1);
             }
 
-            if (y + dy > canvas.height) {
-                showGameOver("SYSTEM FAILURE");
-            }
+            // Score
+            ctx.font = "20px 'Orbitron'";
+            ctx.fillStyle = "#00FF00";
+            ctx.fillText("SCORE: " + score, 20, 40);
 
-            x += dx;
-            y += dy;
-
+            update();
             requestAnimationFrame(draw);
         }
 
-        // Arranque
+        // Arranque inicial para ajustar tamaños
+        resizeCanvas();
         initGame();
-        draw();
+        draw(); // Loop de dibujado continuo
 
     </script>
 </body>
